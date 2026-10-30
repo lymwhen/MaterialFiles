@@ -869,7 +869,14 @@ class FileListFragment : Fragment(), BreadcrumbLayout.Listener, FileListAdapter.
             menu.findItem(R.id.action_select_all).isVisible = pickOptions.allowMultiple
         } else {
             overlayActionMode.title = getString(R.string.file_list_select_title_format, files.size)
-            overlayActionMode.setMenuResource(R.menu.file_list_select)
+            val singleFile = files.singleOrNull()
+            overlayActionMode.setMenuResource(
+                if (singleFile != null) {
+                    R.menu.file_list_select_single
+                } else {
+                    R.menu.file_list_select
+                }
+            )
             val menu = overlayActionMode.menu
             val isAnyFileReadOnly = files.any { it.path.fileSystem.isReadOnly }
             menu.findItem(R.id.action_cut).isVisible = !isAnyFileReadOnly
@@ -894,6 +901,11 @@ class FileListFragment : Fragment(), BreadcrumbLayout.Listener, FileListAdapter.
             menu.findItem(R.id.action_extract).isVisible = areAllFilesArchiveFiles
             val isCurrentPathReadOnly = viewModel.currentPath.fileSystem.isReadOnly
             menu.findItem(R.id.action_archive).isVisible = !isCurrentPathReadOnly
+            if (singleFile != null) {
+                menu.findItem(R.id.action_rename).isVisible = !isAnyFileReadOnly
+                menu.findItem(R.id.action_add_bookmark)
+                    .isVisible = singleFile.attributes.isDirectory
+            }
         }
         if (!overlayActionMode.isActive) {
             binding.appBarLayout.setExpanded(true)
@@ -913,8 +925,9 @@ class FileListFragment : Fragment(), BreadcrumbLayout.Listener, FileListAdapter.
         }
     }
 
-    private fun onOverlayActionModeMenuItemClicked(item: MenuItem): Boolean =
-        when (item.itemId) {
+    private fun onOverlayActionModeMenuItemClicked(item: MenuItem): Boolean {
+        val singleFile = viewModel.selectedFiles.singleOrNull()
+        return when (item.itemId) {
             R.id.action_open -> {
                 pickFiles(viewModel.selectedFiles)
                 true
@@ -935,6 +948,12 @@ class FileListFragment : Fragment(), BreadcrumbLayout.Listener, FileListAdapter.
                 confirmDeleteFiles(viewModel.selectedFiles)
                 true
             }
+            R.id.action_open_with -> {
+                singleFile?.let { openFileWith(it) } != null
+            }
+            R.id.action_rename -> {
+                singleFile?.let { showRenameFileDialog(it) } != null
+            }
             R.id.action_extract -> {
                 extractFiles(viewModel.selectedFiles)
                 true
@@ -947,12 +966,25 @@ class FileListFragment : Fragment(), BreadcrumbLayout.Listener, FileListAdapter.
                 shareFiles(viewModel.selectedFiles)
                 true
             }
+            R.id.action_copy_path -> {
+                singleFile?.let { copyPath(it) } != null
+            }
+            R.id.action_add_bookmark -> {
+                singleFile?.let { addBookmark(it) } != null
+            }
+            R.id.action_create_shortcut -> {
+                singleFile?.let { createShortcut(it) } != null
+            }
+            R.id.action_properties -> {
+                singleFile?.let { showPropertiesDialog(it) } != null
+            }
             R.id.action_select_all -> {
                 selectAllFiles()
                 true
             }
             else -> false
         }
+    }
 
     private fun onOverlayActionModeFinished() {
         viewModel.clearSelectedFiles()

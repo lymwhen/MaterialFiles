@@ -17,6 +17,14 @@ import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
 import coil.dispose
 import coil.load
+import coil.transform.RoundedCornersTransformation
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java8.nio.file.Path
 import me.zhanghai.android.fastscroll.PopupTextProvider
 import me.zhanghai.android.files.R
@@ -37,15 +45,26 @@ import me.zhanghai.android.files.settings.Settings
 import me.zhanghai.android.files.ui.AnimatedListAdapter
 import me.zhanghai.android.files.ui.CheckableForegroundLinearLayout
 import me.zhanghai.android.files.ui.CheckableItemBackground
+import me.zhanghai.android.files.util.dpToDimensionPixelSize
 import me.zhanghai.android.files.util.isMaterial3Theme
 import me.zhanghai.android.files.util.layoutInflater
 import me.zhanghai.android.files.util.valueCompat
 import java.util.Locale
 
+internal data class DirectoryCountKey(
+    val path: Path,
+    val lastModifiedTime: Long,
+    val showHiddenFiles: Boolean
+)
+
 class FileListAdapter(
     private val listener: Listener
 ) : AnimatedListAdapter<FileItem, FileListAdapter.ViewHolder>(CALLBACK), PopupTextProvider {
     private var isSearching = false
+
+    private var directoryCountScope: CoroutineScope? = null
+    private val directoryCountJobs = mutableMapOf<DirectoryCountKey, Job>()
+    private val directoryCountCache = mutableMapOf<DirectoryCountKey, DirectoryContents>()
 
     private lateinit var _viewType: FileViewType
     var viewType: FileViewType
@@ -121,6 +140,14 @@ class FileListAdapter(
         listener.selectFile(file, !selected)
     }
 
+    private fun performLongClickAction(file: FileItem) {
+        if (selectedFiles.isEmpty()) {
+            selectFile(file)
+        } else {
+            listener.openFile(file)
+        }
+    }
+
     fun selectAllFiles() {
         val files = fileItemSetOf()
         for (index in 0..<itemCount) {
@@ -169,6 +196,28 @@ class FileListAdapter(
         }
     }
 
+    override fun onAttachedToRecyclerView(recyclerView: RecyclerView) {
+        super.onAttachedToRecyclerView(recyclerView)
+
+        if (directoryCountScope == null) {
+            directoryCountScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        }
+    }
+
+    override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
+        super.onDetachedFromRecyclerView(recyclerView)
+
+        directoryCountScope?.cancel()
+        directoryCountScope = null
+        directoryCountJobs.clear()
+    }
+
+    override fun onViewRecycled(holder: ViewHolder) {
+        holder.descriptionKey = null
+
+        super.onViewRecycled(holder)
+    }
+
     override fun getItemViewType(position: Int): Int = viewType.ordinal
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -200,9 +249,10 @@ class FileListAdapter(
                     )
                 }
             }
-            popupMenu = PopupMenu(menuButton.context, menuButton)
+            val popupAnchor = menuButton ?: itemLayout
+            popupMenu = PopupMenu(popupAnchor.context, popupAnchor)
                 .apply { inflate(R.menu.file_item) }
-            menuButton.setOnClickListener { popupMenu.show() }
+            menuButton?.setOnClickListener { popupMenu.show() }
         }
     }
 
@@ -215,7 +265,7 @@ class FileListAdapter(
         val isDirectory = file.attributes.isDirectory
         val isEnabled = isFileSelectable(file) || isDirectory
         holder.itemLayout.isEnabled = isEnabled
-        holder.menuButton.isEnabled = isEnabled
+        holder.menuButton?.isEnabled = isEnabled
         val menu = holder.popupMenu.menu
         val path = file.path
         val hasPickOptions = pickOptions != null
@@ -225,10 +275,19 @@ class FileListAdapter(
         val checked = file in selectedFiles
         holder.itemLayout.isChecked = checked
         holder.nameText.apply {
-            if (isSingleLineCompat) {
-                val nameEllipsize = nameEllipsize
-                ellipsize = nameEllipsize
-                isSelected = nameEllipsize == TextUtils.TruncateAt.MARQUEE
+            when (holder.viewType) {
+                FileViewType.LIST -> {
+                    maxLines = 3
+                    ellipsize = TextUtils.TruncateAt.END
+                    isSelected = false
+                }
+                FileViewType.GRID -> {
+                    if (isSingleLineCompat) {
+                        val nameEllipsize = nameEllipsize
+                        ellipsize = nameEllipsize
+                        isSelected = nameEllipsize == TextUtils.TruncateAt.MARQUEE
+                    }
+                }
             }
         }
         if (payloads.isNotEmpty()) {
@@ -244,11 +303,7 @@ class FileListAdapter(
                 }
             }
             setOnLongClickListener {
-                if (selectedFiles.isEmpty()) {
-                    selectFile(file)
-                } else {
-                    listener.openFile(file)
-                }
+                performLongClickAction(file)
                 true
             }
         }
@@ -279,6 +334,13 @@ class FileListAdapter(
             isVisible = shouldLoadThumbnail
             if (shouldLoadThumbnail) {
                 load(path to attributes) {
+                    if (holder.viewType == FileViewType.LIST) {
+                        transformations(
+                            RoundedCornersTransformation(
+                                context.dpToDimensionPixelSize(4f).toFloat()
+                            )
+                        )
+                    }
                     listener { _, _ ->
                         val iconImage = holder.thumbnailIconImage ?: holder.iconImage
                         iconImage.isVisible = false
@@ -317,16 +379,7 @@ class FileListAdapter(
             }
         }
         holder.nameText.text = file.name
-        holder.descriptionText?.text = if (isDirectory) {
-            null
-        } else {
-            val context = holder.descriptionText!!.context
-            val lastModificationTime = attributes.lastModifiedTime().toInstant()
-                .formatShort(context)
-            val size = attributes.fileSize.formatHumanReadable(context)
-            val descriptionSeparator = context.getString(R.string.file_item_description_separator)
-            listOf(lastModificationTime, size).joinToString(descriptionSeparator)
-        }
+        bindDescription(holder, file)
         val isArchivePath = path.isArchivePath
         menu.findItem(R.id.action_copy)
             .setTitle(if (isArchivePath) R.string.file_item_action_extract else R.string.copy)
@@ -390,6 +443,55 @@ class FileListAdapter(
         }
     }
 
+    private fun bindDescription(holder: ViewHolder, file: FileItem) {
+        val context = holder.itemLayout.context
+        val attributes = file.attributes
+        holder.descriptionLayout?.isVisible = !attributes.isDirectory
+        holder.directoryDescriptionLayout?.isVisible = attributes.isDirectory
+        holder.descriptionKey = null
+        if (!attributes.isDirectory) {
+            holder.descriptionText?.text = attributes.fileSize.formatHumanReadable(context)
+            holder.descriptionTimeText?.text = attributes.lastModifiedTime().toInstant()
+                .formatShort(context)
+            return
+        }
+        holder.setDirectoryFallback()
+        if (!file.path.isLocalPath) {
+            return
+        }
+        val showHiddenFiles = Settings.FILE_LIST_SHOW_HIDDEN_FILES.valueCompat
+        val key = DirectoryCountKey(
+            file.path, attributes.lastModifiedTime().toMillis(), showHiddenFiles
+        )
+        holder.descriptionKey = key
+        val cachedContents = directoryCountCache[key]
+        if (cachedContents != null) {
+            holder.setDescriptionContents(cachedContents)
+            return
+        }
+        val scope = directoryCountScope ?: return
+        if (directoryCountJobs.containsKey(key)) {
+            return
+        }
+        directoryCountJobs[key] = scope.launch(Dispatchers.IO) {
+            val contents = try {
+                file.path.loadDirectoryContents(showHiddenFiles)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                null
+            }
+            withContext(Dispatchers.Main) {
+                directoryCountJobs.remove(key)
+                if (contents != null) {
+                    directoryCountCache[key] = contents
+                    if (holder.descriptionKey == key) {
+                        holder.setDescriptionContents(contents)
+                    }
+                }
+            }
+        }
+    }
+
     override fun getPopupText(view: View, position: Int): CharSequence {
         val file = getItem(position)
         return when (sortOptions.by) {
@@ -418,6 +520,7 @@ class FileListAdapter(
 
     class ViewHolder private constructor(
         root: View,
+        val viewType: FileViewType,
         val itemLayout: CheckableForegroundLinearLayout,
         val iconLayout: View,
         val iconImage: ImageView,
@@ -428,11 +531,17 @@ class FileListAdapter(
         val appIconBadgeImage: ImageView,
         val badgeImage: ImageView,
         val nameText: TextView,
+        val descriptionLayout: ViewGroup?,
         val descriptionText: TextView?,
-        val menuButton: ImageButton
+        val descriptionTimeText: TextView?,
+        val directoryDescriptionLayout: ViewGroup?,
+        val directoryCountText: TextView?,
+        val fileCountText: TextView?,
+        val menuButton: ImageButton?
     ) : RecyclerView.ViewHolder(root) {
         constructor(binding: FileItemListBinding) : this(
             binding.root,
+            FileViewType.LIST,
             binding.itemLayout,
             binding.iconLayout,
             binding.iconImage,
@@ -443,12 +552,18 @@ class FileListAdapter(
             binding.appIconBadgeImage,
             binding.badgeImage,
             binding.nameText,
+            binding.descriptionLayout,
             binding.descriptionText,
-            binding.menuButton
+            binding.descriptionTimeText,
+            binding.directoryDescriptionLayout,
+            binding.directoryCountText,
+            binding.fileCountText,
+            null
         )
 
         constructor(binding: FileItemGridBinding) : this(
             binding.root,
+            FileViewType.GRID,
             binding.itemLayout,
             binding.iconLayout,
             binding.iconImage,
@@ -460,10 +575,40 @@ class FileListAdapter(
             binding.badgeImage,
             binding.nameText,
             null,
+            null,
+            null,
+            null,
+            null,
+            null,
             binding.menuButton
         )
 
+        internal var descriptionKey: DirectoryCountKey? = null
+
         lateinit var popupMenu: PopupMenu
+
+        fun setDirectoryFallback() {
+            val directoryCountText = directoryCountText ?: return
+            directoryCountText.text = directoryCountText.context.getString(
+                R.string.file_item_directory
+            )
+            fileCountText?.isVisible = false
+        }
+
+        fun setDescriptionContents(contents: DirectoryContents) {
+            val directoryCountText = directoryCountText ?: return
+            directoryCountText.text = directoryCountText.context.getString(
+                R.string.file_item_directory_count_format,
+                contents.directoryCount
+            )
+            fileCountText?.apply {
+                isVisible = true
+                text = context.getString(
+                    R.string.file_item_file_count_format,
+                    contents.fileCount
+                )
+            }
+        }
     }
 
     interface Listener {

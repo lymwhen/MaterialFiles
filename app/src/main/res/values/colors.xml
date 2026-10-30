@@ -31,6 +31,9 @@
 
     <color name="shortcut_icon_background">#F5F5F5</color>
 
+    <color name="file_list_item_title_text_color">#3D3D3D</color>
+    <color name="file_list_item_description_text_color">#727272</color>
+
     <color name="file_icon_light_blue">#4B86F0</color>
     <color name="file_icon_blue">#4285F4</color>
     <color name="file_icon_cyan">#24C1E0</color>
