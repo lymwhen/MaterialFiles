@@ -121,7 +121,7 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 - `assembleDebug` 生成调试 APK。
 - `lintVitalRelease` 执行 Release 变体的关键 Lint 检查。
 
-当前 `.github/workflows/android.yml` 在 push 时执行相同构建，并上传 `app-debug.apk`，Artifact 保留 10 天。
+当前 `.github/workflows/android.yml` 在分支 push 时执行相同构建，并上传 `app-debug.apk`，Artifact 保留 10 天；`v` Tag push 跳过普通构建，只执行 Release job。
 
 ### Release 构建
 
@@ -142,9 +142,11 @@ KEY_PASSWORD
 
 正式发布前应确认 `applicationId`、签名证书和版本号符合发布目标。
 
+GitHub Release 的正文使用对应 Tag 的注解 message；Tag message 应汇总上一版 Tag 到当前 Tag 之间的全部定制提交，而不是只描述最新提交。如果 Tag 没有注解，则回退使用 Tag 指向的提交 message。
+
 ### GitHub Actions Release
 
-推送任意 Git Tag 时，在普通 CI 检查通过后执行：
+推送符合 `vX.Y.Z-cN` 格式的 Git Tag 时，直接执行 Release 流程（不执行普通 CI build）：
 
 ```text
 assembleRelease -> GitHub Release -> app-release.apk
