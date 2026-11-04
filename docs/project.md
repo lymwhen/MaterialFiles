@@ -31,16 +31,27 @@
 
 ### 文件夹副标题
 
-- 本地文件夹显示直接子项统计，例如 `2 文件夹  4 文件`。
+- 本地和 WebDAV 文件夹显示直接子项统计，例如 `2 文件夹  4 文件`。
 - 目录数和文件数之间的固定间距为 `8dp`。
-- 非本地文件夹固定显示 `文件夹`，避免 FTP、WebDAV、SFTP、SMB 等目录列表请求影响列表性能。
+- FTP、SFTP、SMB 等非 WebDAV 远程文件夹固定显示 `文件夹`，避免额外目录列表请求影响列表性能。
 - 当前“显示隐藏文件”设置关闭时，隐藏项目不计入统计；开启后一并统计。
 - 统计通过 `DirectoryContents.kt` 在后台执行，并按路径、修改时间和隐藏文件设置缓存。
+- WebDAV 统计使用现有目录枚举实现，每个被统计目录会产生一次 `PROPFIND Depth: 1` 请求；该版本优先保证功能兼容性，尚未加入远程统计的并发限制、按需加载或外部变更刷新。
 
 相关文件：
 
 - `app/src/main/java/me/zhanghai/android/files/filelist/DirectoryContents.kt`
 - `app/src/main/java/me/zhanghai/android/files/filelist/FileListAdapter.kt`
+
+### 远程缩略图加载循环修复
+
+- 只读 `SeekableByteChannel` 关闭时不再发送 `ENTRY_MODIFY`，避免远程媒体缩略图读取被误判为文件修改并反复触发目录刷新。
+- 实际 `write()` 和 `truncate()` 仍会发送修改事件，不影响文件写入后的自动刷新。
+- 该问题对应上游 issue [#1030](https://github.com/zhanghai/MaterialFiles/issues/1030)；截至上游 `93c33396` 尚未修复，因此保留本仓库补丁，后续合并时优先对比上游是否采用等价修复。
+
+相关文件：
+
+- `app/src/main/java/me/zhanghai/android/files/provider/common/LocalWatchService.kt`
 
 ### 文件项菜单和选择逻辑
 
@@ -63,6 +74,7 @@
 - 尽量把定制逻辑集中在 `FileViewType.LIST` 分支和 `filelist` 相关资源中，不要修改网格模式。
 - 合并上游时优先保留上游的数据加载、文件操作和权限逻辑，再套用本仓库的列表视觉和单选菜单差异。
 - 新增或调整定制功能后，应在本章节补充变更原因、涉及文件和潜在合并风险。
+- WebDAV 目录统计当前仅放行 WebDAV 路径，FTP、SFTP、SMB 继续使用占位文案；后续如优化请求量或缓存刷新，应优先保持 `FileListAdapter` 和 `DirectoryContents` 的局部定制，避免改动 WebDAV provider 核心逻辑。
 - 枚举值、设置键和已有资源名如果已被用户数据持久化，不应随意重排或重命名。
 
 ## 本地构建方式

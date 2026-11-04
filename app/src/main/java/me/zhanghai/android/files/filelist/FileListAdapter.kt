@@ -41,6 +41,7 @@ import me.zhanghai.android.files.file.iconRes
 import me.zhanghai.android.files.file.isApk
 import me.zhanghai.android.files.provider.archive.isArchivePath
 import me.zhanghai.android.files.provider.common.isEncrypted
+import me.zhanghai.android.files.provider.webdav.isWebDavPath
 import me.zhanghai.android.files.settings.Settings
 import me.zhanghai.android.files.ui.AnimatedListAdapter
 import me.zhanghai.android.files.ui.CheckableForegroundLinearLayout
@@ -456,7 +457,7 @@ class FileListAdapter(
             return
         }
         holder.setDirectoryFallback()
-        if (!file.path.isLocalPath) {
+        if (!file.path.isLocalPath && !file.path.isWebDavPath) {
             return
         }
         val showHiddenFiles = Settings.FILE_LIST_SHOW_HIDDEN_FILES.valueCompat

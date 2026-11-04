@@ -128,12 +128,6 @@ private class NotifyEntryModifiedNonForceableSeekableByteChannel(
             LocalWatchService.onEntryModified(path)
         }
     }
-
-    override fun close() {
-        super.close()
-
-        LocalWatchService.onEntryModified(path)
-    }
 }
 
 private class NotifyEntryModifiedForceableSeekableByteChannel(
@@ -150,12 +144,6 @@ private class NotifyEntryModifiedForceableSeekableByteChannel(
         return super.truncate(size).also {
             LocalWatchService.onEntryModified(path)
         }
-    }
-
-    override fun close() {
-        super.close()
-
-        LocalWatchService.onEntryModified(path)
     }
 }
 
